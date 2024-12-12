@@ -1,55 +1,34 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"os"
 	"path/filepath"
-	"holidaybingo/pkg/cardgen"
+	"github.com/ginjaninja78/holidaybingo/pkg/cardgen"
 )
 
 func main() {
-	// Initialize card generator with template
-	templatePath := filepath.Join("pkg", "cardgen", "templates", "card_template.html.html")
-	generator := cardgen.NewGenerator(templatePath)
+	// Create generator with template
+	generator := cardgen.NewGenerator("pkg/cardgen/templates/card_template_working.html")
 
-	// Get list of actual images from img directory
-	imgDir := filepath.Join("img")
-	entries, err := os.ReadDir(imgDir)
+	// Get list of image files
+	images, err := filepath.Glob("img/*.jpg")
 	if err != nil {
-		log.Fatalf("Failed to read image directory: %v", err)
+		log.Fatalf("Failed to get images: %v", err)
 	}
 
-	var images []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			// Only include image files
-			if ext := filepath.Ext(entry.Name()); ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
-				images = append(images, filepath.Join(imgDir, entry.Name()))
-			}
-		}
-	}
-
-	if len(images) < 24 {
-		log.Fatalf("Not enough images in img directory. Need at least 24, found %d", len(images))
-	}
-
+	// Set images for the generator
 	generator.SetImages(images)
 
-	// Generate 3 test cards
-	cards, err := generator.GenerateCards(3)
+	// Generate single test card
+	cards, err := generator.GenerateCards(1)
 	if err != nil {
 		log.Fatalf("Failed to generate cards: %v", err)
 	}
 
-	// Save cards to PDF files in the cards directory
+	// Save to PDF
 	if err := generator.SaveToPDF(cards, "cards"); err != nil {
-		log.Fatalf("Failed to save cards: %v", err)
+		log.Fatalf("Failed to save PDFs: %v", err)
 	}
 
-	fmt.Printf("Successfully generated %d cards and saved to cards directory\n", len(cards))
-	fmt.Println("\nCard IDs:")
-	for i, card := range cards {
-		fmt.Printf("Card %d: %s\n", i+1, card.ID)
-	}
+	log.Println("Test card generated successfully")
 }

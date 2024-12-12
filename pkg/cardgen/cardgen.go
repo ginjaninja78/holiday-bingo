@@ -1,3 +1,11 @@
+/*
+TODO: Phase 2 - Logo Integration
+1. Fix logo image handling - DONE
+2. Verify logo format and dimensions
+3. Add proper positioning and scaling
+4. Consider alternative image libraries if needed
+*/
+
 package cardgen
 
 import (
@@ -6,11 +14,58 @@ import (
 	"time"
 	"os"
 	"path/filepath"
-	"github.com/jung-kurt/gofpdf"
+	"strings"
+	"image/png"
+	"image/jpeg"
 	"image"
+	"image/color"
 	_ "image/jpeg"
-	_ "image/png"
+	"github.com/jung-kurt/gofpdf"
+	"github.com/google/uuid"
 )
+
+// convertJPGToPNG converts a JPG image to PNG format
+func convertJPGToPNG(jpgPath string) (string, error) {
+	// Open JPG file
+	jpgFile, err := os.Open(jpgPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open JPG %s: %v", jpgPath, err)
+	}
+	defer jpgFile.Close()
+
+	// Decode JPG
+	img, err := jpeg.Decode(jpgFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JPG %s: %v", jpgPath, err)
+	}
+
+	// Convert to RGBA (8-bit per channel)
+	bounds := img.Bounds()
+	rgba := image.NewRGBA(bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			rgba.Set(x, y, color.RGBAModel.Convert(img.At(x, y)))
+		}
+	}
+
+	// Create PNG file in temp directory
+	pngPath := filepath.Join(os.TempDir(), strings.TrimSuffix(filepath.Base(jpgPath), ".jpg")+".png")
+	pngFile, err := os.Create(pngPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create PNG %s: %v", pngPath, err)
+	}
+	defer pngFile.Close()
+
+	// Encode as PNG with default encoder (8-bit depth)
+	encoder := png.Encoder{
+		CompressionLevel: png.DefaultCompression,
+	}
+	if err := encoder.Encode(pngFile, rgba); err != nil {
+		return "", fmt.Errorf("failed to encode PNG %s: %v", pngPath, err)
+	}
+
+	return pngPath, nil
+}
 
 // Card represents a bingo card with its properties
 type Card struct {
@@ -37,35 +92,23 @@ func (g *Generator) SetImages(images []string) {
 	g.images = images
 }
 
-// generateID creates a unique card ID in format XX123
+// generateID creates a unique card ID
 func generateID() string {
-	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	const numbers = "0123456789"
-
-	rand.Seed(time.Now().UnixNano())
-
-	id := make([]byte, 5)
-	id[0] = letters[rand.Intn(len(letters))]
-	id[1] = letters[rand.Intn(len(letters))]
-	id[2] = numbers[rand.Intn(len(numbers))]
-	id[3] = numbers[rand.Intn(len(numbers))]
-	id[4] = numbers[rand.Intn(len(numbers))]
-
-	return string(id)
+	id := uuid.New().String()
+	shortID := strings.ReplaceAll(id, "-", "")[:6]
+	return fmt.Sprintf("Card No.# %s", shortID)
 }
 
 // GenerateCards generates the specified number of unique bingo cards
 func (g *Generator) GenerateCards(count int) ([]Card, error) {
-	if len(g.images) < 24 { // Need at least 24 images (5x5 grid minus center)
+	if len(g.images) < 24 {
 		return nil, fmt.Errorf("not enough images provided: need at least 24, got %d", len(g.images))
 	}
 
 	cards := make([]Card, count)
 	for i := 0; i < count; i++ {
-		// Generate unique ID
 		cardID := generateID()
 
-		// Shuffle images for this card
 		shuffled := make([]string, len(g.images))
 		copy(shuffled, g.images)
 		rand.Seed(time.Now().UnixNano())
@@ -73,10 +116,9 @@ func (g *Generator) GenerateCards(count int) ([]Card, error) {
 			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 		})
 
-		// Take first 24 images for the card
 		squares := make([]string, 25)
 		copy(squares[:12], shuffled[:12])
-		squares[12] = "FREE" // Center square is FREE
+		squares[12] = filepath.Join("assets", "free_space.jpg")
 		copy(squares[13:], shuffled[12:24])
 
 		cards[i] = Card{
@@ -88,95 +130,127 @@ func (g *Generator) GenerateCards(count int) ([]Card, error) {
 	return cards, nil
 }
 
-// SaveToPDF saves the cards to PDF files with clickable squares
+// SaveToPDF saves the cards to PDF files optimized for Acrobat stamp tool
 func (g *Generator) SaveToPDF(cards []Card, outputDir string) error {
-	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
 
+	// Convert free space to PNG
+	freeSpacePath := filepath.Join("assets", "free_space.jpg")
+	freeSpacePNG, err := convertJPGToPNG(freeSpacePath)
+	if err != nil {
+		return fmt.Errorf("failed to convert free space image: %v", err)
+	}
+	defer os.Remove(freeSpacePNG)
+
+	// Convert logo to PNG
+	logoPath := filepath.Join("assets", "logo.jpg")
+	logoPNG, err := convertJPGToPNG(logoPath)
+	if err != nil {
+		return fmt.Errorf("failed to convert logo image: %v", err)
+	}
+	defer os.Remove(logoPNG)
+
+	// Convert gameplay images to PNG
+	imagePNGs := make([]string, len(g.images))
+	for i, img := range g.images {
+		pngPath, err := convertJPGToPNG(img)
+		if err != nil {
+			return fmt.Errorf("failed to convert gameplay image %s: %v", img, err)
+		}
+		imagePNGs[i] = pngPath
+		defer os.Remove(pngPath)
+	}
+
 	for _, card := range cards {
-		// Create new PDF
+		// Create PDF
 		pdf := gofpdf.New("P", "mm", "A4", "")
-		pdf.SetAutoPageBreak(false, 0)
+		pdf.SetFont("Arial", "", 12)
 		pdf.AddPage()
 
-		// Set up card layout
+		// Set up dimensions
 		const (
-			margin     = 10.0  // mm
-			cellSize   = 35.0  // mm
+			margin     = 20.0
+			cellSize   = 35.0
 			gridSize   = 5
-			imageSize  = 30.0  // mm
-			pageWidth  = 210.0 // A4 width in mm
-			pageHeight = 297.0 // A4 height in mm
+			pageWidth  = 210.0
+			pageHeight = 297.0
+			logoWidth  = 50.0
+			logoHeight = 20.0
+			idPadding  = 5.0 // 5mm padding for card ID
 		)
 
-		// Calculate starting position to center the grid
-		startX := (pageWidth - (cellSize * float64(gridSize))) / 2
-		startY := margin + 20 // Leave space for title
+		// Add card ID at top left
+		pdf.SetFont("Arial", "", 12)
+		pdf.Text(idPadding, idPadding+5, card.ID) // +5 to account for font height
+
+		// Add logo at the top
+		logoX := (pageWidth - logoWidth) / 2
+		logoY := margin + 5
+		pdf.Image(logoPNG, logoX, logoY, logoWidth, logoHeight, false, "PNG", 0, "")
 
 		// Add title
 		pdf.SetFont("Arial", "B", 24)
-		pdf.Text((pageWidth-pdf.GetStringWidth("Holiday Bingo"))/2, margin+10, "Holiday Bingo")
+		title := "SSO&O Holiday Bingo"
+		titleWidth := pdf.GetStringWidth(title)
+		pdf.Text((pageWidth-titleWidth)/2, margin+30, title)
 
-		// Add card ID
-		pdf.SetFont("Arial", "", 12)
-		pdf.Text(margin, pageHeight-margin, fmt.Sprintf("Card ID: %s", card.ID))
+		// Calculate grid position
+		startX := (pageWidth - (cellSize * float64(gridSize))) / 2
+		startY := margin + 45
 
-		// Draw grid and add images
+		// Draw grid
 		for row := 0; row < gridSize; row++ {
 			for col := 0; col < gridSize; col++ {
 				x := startX + float64(col)*cellSize
 				y := startY + float64(row)*cellSize
 				index := row*gridSize + col
-
+				
 				// Draw cell border
-				pdf.Rect(x, y, cellSize, cellSize, "D")
+				pdf.SetFillColor(255, 255, 255) // White background
+				pdf.Rect(x, y, cellSize, cellSize, "DF")
 
-				if index == 12 { // Center FREE space
-					pdf.SetFont("Arial", "B", 16)
-					pdf.Text(x+(cellSize-pdf.GetStringWidth("FREE"))/2, y+cellSize/2, "FREE")
-					
-					// Add checkbox
-					pdf.SetFont("ZapfDingbats", "", 12)
-					pdf.Text(x+2, y+5, "☐")
+				if index == 12 { // Center cell
+					pdf.Image(freeSpacePNG, x, y, cellSize, cellSize, false, "PNG", 0, "")
 				} else {
-					// Add image
-					imgPath := card.Squares[index]
-					if imgFile, err := os.Open(imgPath); err == nil {
-						if img, _, err := image.DecodeConfig(imgFile); err == nil {
-							imgFile.Close()
-							
-							// Calculate scaling to fit in cell while maintaining aspect ratio
-							scale := imageSize / float64(img.Width)
-							if float64(img.Height)*scale > imageSize {
-								scale = imageSize / float64(img.Height)
-							}
-							
-							imgWidth := float64(img.Width) * scale
-							imgHeight := float64(img.Height) * scale
-							
-							// Center image in cell
-							imgX := x + (cellSize-imgWidth)/2
-							imgY := y + (cellSize-imgHeight)/2
-							
-							pdf.Image(imgPath, imgX, imgY, imgWidth, imgHeight, false, "", 0, "")
-						}
+					imgIndex := index
+					if index > 12 {
+						imgIndex--
 					}
-					
-					// Add checkbox
-					pdf.SetFont("ZapfDingbats", "", 12)
-					pdf.Text(x+2, y+5, "☐")
+					pdf.Image(imagePNGs[imgIndex], x, y, cellSize, cellSize, false, "PNG", 0, "")
 				}
+				
+				// Re-draw border to ensure it's visible
+				pdf.Rect(x, y, cellSize, cellSize, "D")
 			}
 		}
 
-		// Add instructions
+		// Calculate position for instructions (below grid with padding)
+		instructionsY := startY + (cellSize * float64(gridSize)) + 20 // 20mm padding
+
+		// Add instructions header
+		pdf.SetFont("Arial", "B", 12)
+		header := "Instructions:"
+		headerWidth := pdf.GetStringWidth(header)
+		pdf.Text((pageWidth-headerWidth)/2, instructionsY, header)
+
+		// Add step-by-step instructions
 		pdf.SetFont("Arial", "", 10)
-		pdf.Text(margin, margin, "Click or mark the boxes to shade squares as they are called.")
+		instructions := []string{
+			"To Mark: Comments > Drawing Markups > Stamps > Select stamp > Click square",
+			"To Reset: Tools > Comments > Clear All",
+		}
+
+		lineHeight := 5.0 // Space between lines
+		for i, line := range instructions {
+			lineWidth := pdf.GetStringWidth(line)
+			y := instructionsY + float64(i+1)*lineHeight + 5 // +5 for padding below header
+			pdf.Text((pageWidth-lineWidth)/2, y, line)
+		}
 
 		// Save PDF
-		outputPath := filepath.Join(outputDir, fmt.Sprintf("HolidayBingo_%s.pdf", card.ID))
+		outputPath := filepath.Join(outputDir, fmt.Sprintf("%s.pdf", strings.ReplaceAll(card.ID, " ", "_")))
 		if err := pdf.OutputFileAndClose(outputPath); err != nil {
 			return fmt.Errorf("failed to save PDF: %v", err)
 		}
