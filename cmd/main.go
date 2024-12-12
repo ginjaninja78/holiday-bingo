@@ -21,13 +21,12 @@ import (
 )
 
 // Global state variables for game management
-// TODO: Refactor into proper state management structure in v2
 var (
 	mainLabel       *widget.Label
 	historyShelf    *fyne.Container
-	images          []fyne.Resource    // Stores all loaded game images
-	currentIndex    int               // Current image index in play
-	gameActive      bool              // Controls game state
+	images          []fyne.Resource
+	currentIndex    int
+	gameActive      bool
 	newGameButton   *widget.Button
 	nextButton      *widget.Button
 	bingoButton     *widget.Button
@@ -37,44 +36,41 @@ var (
 	buttonContainer *fyne.Container
 	historyScroll   *container.Scroll
 	imageContainer  *fyne.Container
-	imageCache      *cache.ImageCacheManager  // Manages concurrent image loading and caching
-	totalImages     int                      // Total number of images to be loaded
-	loadedCount     int                      // Number of images currently loaded
+	imageCache      *cache.ImageCacheManager
+	totalImages     int
+	loadedCount     int
 )
 
 func main() {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Fatalf("Error loading .env file: %v", err)
+		log.Printf("Warning: Error loading .env file: %v", err)
 	}
 
 	// Initialize cache manager
-	imageCache = cache.NewImageCacheManager(4) // Use 4 workers
+	imageCache = cache.NewImageCacheManager(4)
 
 	myApp := app.NewWithID("com.example.holidaybingo")
 	myApp.Settings().SetTheme(theme.LightTheme())
 	myWindow := myApp.NewWindow("SSO&O Holiday BINGO!")
 
-	// Initialize game state
 	initializeGame()
 
-	// Main display
-	mainLabel = widget.NewLabel("") // Initialize mainLabel first
+	mainLabel = widget.NewLabel("")
 	mainLabel.Alignment = fyne.TextAlignCenter
 	mainLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	// Create buttons
 	nextButton = widget.NewButton("Next", func() {
 		if nextButton.Text == "Continue" {
-			// Resume the game
 			gameActive = true
 			nextButton.SetText("Next")
-			bingoButton.SetText("Bingo!")  // Reset Bingo button text too
+			bingoButton.SetText("Bingo!")
 			log.Println("Game continued")
 			return
 		}
 		
 		if !gameActive {
+			log.Println("Game not active, ignoring Next click")
 			return
 		}
 		displayNextImage()
@@ -83,50 +79,51 @@ func main() {
 
 	bingoButton = widget.NewButton("Bingo!", func() {
 		if bingoButton.Text == "End Game" {
-			// End the game
+			log.Println("Ending game and resetting state")
 			gameActive = false
 			currentIndex = 0
+			loadedCount = 0
+			totalImages = 0
+			images = make([]fyne.Resource, 0)
 			historyShelf.Objects = []fyne.CanvasObject{}
 			historyScroll.Refresh()
 			imageContainer.Objects = []fyne.CanvasObject{widget.NewLabel("Click New Game to start!")}
 			bingoButton.SetText("Bingo!")
 			nextButton.SetText("Next")
 			mainView.Refresh()
+			log.Println("Game ended and reset")
 			return
 		}
 		
-		// Pause the game for Bingo verification
 		gameActive = false
 		nextButton.SetText("Continue")
 		bingoButton.SetText("End Game")
 		log.Println("Bingo clicked")
 	})
 
-	// Left Sidebar
+	// Create New Game button separately to reference it
+	newGameButton = widget.NewButton("New Game", func() {
+		log.Println("Starting new game")
+		startNewGame()
+		mainLabel.SetText("Let's Play!")
+	})
+
 	sidebar := container.NewVBox(
 		widget.NewLabel("SSO&O"),
-		widget.NewButton("New Game", func() {
-			startNewGame()
-			mainLabel.SetText("Let's Play!")
-		}),
+		newGameButton,  // Use the stored button
 		widget.NewButton("Generate Cards", func() {
-			// TODO: Implement Generate Cards functionality
 			log.Println("Generate Cards clicked")
 		}),
 		widget.NewButton("Verify Bingo", func() {
-			// TODO: Implement Verify Bingo functionality
 			log.Println("Verify Bingo clicked")
 		}),
 		widget.NewButton("Scoreboard", func() {
-			// TODO: Implement Scoreboard functionality
 			log.Println("Scoreboard clicked")
 		}),
 		widget.NewButton("Next Round", func() {
-			// TODO: Implement Next Round functionality
 			log.Println("Next Round clicked")
 		}),
 		widget.NewButton("Config", func() {
-			// TODO: Implement Config functionality
 			log.Println("Config clicked")
 		}),
 		widget.NewButton("Exit", func() {
@@ -135,7 +132,6 @@ func main() {
 		layout.NewSpacer(),
 	)
 
-	// History section at top of right side
 	historyLabel := widget.NewLabel("History")
 	historyLabel.Alignment = fyne.TextAlignCenter
 
@@ -147,13 +143,10 @@ func main() {
 		container.NewPadded(historyScroll),
 	)
 
-	// Set a fixed height for the history section
 	historyContainer.Resize(fyne.NewSize(800, 150))
 
-	// Main display area
 	imageContainer = container.NewCenter(widget.NewLabel("Click New Game to start!"))
 
-	// Buttons below main display
 	buttonBox := container.NewHBox(
 		layout.NewSpacer(),
 		nextButton,
@@ -162,21 +155,19 @@ func main() {
 		layout.NewSpacer(),
 	)
 
-	// Right side layout (history at top, main content below)
 	rightSide := container.NewBorder(
-		historyContainer, // top
-		buttonBox,        // bottom
-		nil,              // left
-		nil,              // right
-		imageContainer,   // center
+		historyContainer,
+		buttonBox,
+		nil,
+		nil,
+		imageContainer,
 	)
 
-	// Combine left sidebar with right side content
 	content := container.NewHSplit(
 		sidebar,
 		rightSide,
 	)
-	content.SetOffset(0.2) // Sidebar takes 20% of horizontal space
+	content.SetOffset(0.2)
 
 	mainView = container.NewMax(content)
 	myWindow.SetContent(mainView)
@@ -185,50 +176,70 @@ func main() {
 }
 
 func initializeGame() {
-	// Initialize resources and game state
+	log.Println("Initializing game state")
 	images = make([]fyne.Resource, 0)
 	currentIndex = 0
+	loadedCount = 0
+	totalImages = 0
 	gameActive = false
+	// Create a new image cache manager
+	imageCache = cache.NewImageCacheManager(4)
 	log.Println("Game initialized")
 }
 
 func startNewGame() {
+	log.Println("Starting new game setup")
+	initializeGame()
+	
 	// Clear history
-	historyShelf.Objects = []fyne.CanvasObject{}
-	historyScroll.Refresh()
+	if historyShelf != nil {
+		historyShelf.Objects = []fyne.CanvasObject{}
+		historyScroll.Refresh()
+	}
 
-	// Load images from the img directory
-	imgDir := "img"
+	// Get executable directory
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Printf("Error getting executable path: %v", err)
+		return
+	}
+	exeDir := filepath.Dir(exePath)
+	imgDir := filepath.Join(exeDir, "img")
+	
+	log.Printf("Looking for images in: %s", imgDir)
 	entries, err := os.ReadDir(imgDir)
 	if err != nil {
 		log.Printf("Failed to read image directory: %v", err)
-		return
+		// Try current directory as fallback
+		imgDir = "img"
+		entries, err = os.ReadDir(imgDir)
+		if err != nil {
+			log.Printf("Failed to read fallback image directory: %v", err)
+			return
+		}
 	}
 
-	// Create a loading progress bar
-	progress := widget.NewProgressBar()
-	imageContainer.Objects = []fyne.CanvasObject{
-		widget.NewLabel("Loading images..."),
-		progress,
-	}
-	imageContainer.Refresh()
-
-	// Collect image paths
 	var imagePaths []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			imagePaths = append(imagePaths, filepath.Join(imgDir, entry.Name()))
+			ext := filepath.Ext(entry.Name())
+			if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
+				fullPath := filepath.Join(imgDir, entry.Name())
+				imagePaths = append(imagePaths, fullPath)
+				log.Printf("Found image: %s", fullPath)
+			}
 		}
 	}
 
 	if len(imagePaths) == 0 {
+		log.Println("No images found in directory")
 		imageContainer.Objects = []fyne.CanvasObject{
 			widget.NewLabel("No images found in directory"),
 		}
 		return
 	}
 
-	// Initialize image slice with capacity
+	log.Printf("Found %d images to load", len(imagePaths))
 	images = make([]fyne.Resource, 0, len(imagePaths))
 	loadedImages := make(map[string]bool)
 	
@@ -242,18 +253,32 @@ func startNewGame() {
 
 	go func() {
 		for result := range resultChan {
-			if result.Err == nil && !loadedImages[result.Path] {
+			if result.Err != nil {
+				log.Printf("Error loading image %s: %v", result.Path, result.Err)
+				continue
+			}
+			
+			if !loadedImages[result.Path] {
+				log.Printf("Successfully loaded image: %s", result.Path)
 				images = append(images, result.Resource)
 				loadedImages[result.Path] = true
 				loadedCount++
-				progress.SetValue(float64(loadedCount) / float64(totalImages))
 
-				// If this is the first image, start the game
-				if len(images) == 1 {
-					rand.Seed(time.Now().UnixNano())
-					currentIndex = 0
-					gameActive = true
-					displayNextImage()
+				if loadedCount == totalImages {
+					log.Printf("All %d images loaded, shuffling", totalImages)
+					source := rand.NewSource(time.Now().UnixNano())
+					r := rand.New(source)
+
+					r.Shuffle(len(images), func(i, j int) {
+						images[i], images[j] = images[j], images[i]
+					})
+
+					if !gameActive {
+						log.Println("Starting game with loaded images")
+						currentIndex = 0
+						gameActive = true
+						displayNextImage()
+					}
 				}
 			}
 		}
@@ -262,35 +287,29 @@ func startNewGame() {
 	// Start with any cached images immediately
 	for _, path := range imagePaths {
 		if resource, exists := imageCache.Get(path); exists && !loadedImages[path] {
+			log.Printf("Found cached image: %s", path)
 			images = append(images, resource)
 			loadedImages[path] = true
 			loadedCount++
 		}
 	}
-
-	// Start game if we have any images
-	if len(images) > 0 {
-		rand.Seed(time.Now().UnixNano())
-		currentIndex = 0
-		gameActive = true
-		displayNextImage()
-	}
 }
 
 func displayNextImage() {
 	if !gameActive {
+		log.Println("Game not active, cannot display next image")
 		return
 	}
 
-	// If we've shown all current images but more are still loading, wait for next image
 	if currentIndex >= len(images) {
 		if loadedCount < totalImages {
+			log.Printf("Waiting for more images to load (%d/%d loaded)", loadedCount, totalImages)
 			imageContainer.Objects = []fyne.CanvasObject{
 				widget.NewLabel("Loading more images..."),
 			}
 			return
 		}
-		// Only end if we've shown ALL images
+		log.Println("Game Over - All images shown")
 		imageContainer.Objects = []fyne.CanvasObject{
 			widget.NewLabel("Game Over - All images shown"),
 		}
@@ -298,18 +317,22 @@ func displayNextImage() {
 		return
 	}
 
-	// Display current image
-	img := canvas.NewImageFromResource(images[currentIndex])
+	currentImg := images[currentIndex]
+	log.Printf("Displaying image %d/%d: %s", currentIndex+1, len(images), currentImg.Name())
+
+	img := canvas.NewImageFromResource(currentImg)
 	img.FillMode = canvas.ImageFillContain
 	img.SetMinSize(fyne.NewSize(400, 400))
 	imageContainer.Objects = []fyne.CanvasObject{img}
 
-	// Add to history
-	historyImg := canvas.NewImageFromResource(images[currentIndex])
-	historyImg.SetMinSize(fyne.NewSize(100, 100))
-	historyImg.FillMode = canvas.ImageFillContain
-	historyShelf.Add(historyImg)
-	historyScroll.Refresh()
+	if currentIndex > 0 {
+		historyImg := canvas.NewImageFromResource(images[currentIndex-1])
+		historyImg.SetMinSize(fyne.NewSize(100, 100))
+		historyImg.FillMode = canvas.ImageFillContain
+		historyShelf.Add(historyImg)
+		historyScroll.Refresh()
+		log.Printf("Added image %d to history", currentIndex)
+	}
 
 	currentIndex++
 	mainView.Refresh()

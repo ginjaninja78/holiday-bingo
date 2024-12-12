@@ -2,13 +2,14 @@ package cache
 
 import (
 	"container/list"
-	"fyne.io/fyne/v2"
 	"sync"
 	"time"
+
+	"fyne.io/fyne/v2"
 )
 
 const (
-	defaultMaxWorkers = 8  // Increased worker count
+	DefaultMaxWorkers = 8   // Increased worker count
 	defaultCacheSize  = 200 // Increased cache size
 )
 
@@ -37,13 +38,13 @@ type ImageResult struct {
 
 func NewImageCacheManager(maxWorkers int) *ImageCacheManager {
 	if maxWorkers <= 0 {
-		maxWorkers = defaultMaxWorkers
+		maxWorkers = DefaultMaxWorkers
 	}
 
 	manager := &ImageCacheManager{
 		cache:      make(map[string]*list.Element),
 		lruList:    list.New(),
-		loadQueue:  make(chan string, maxWorkers*4),  // Increased buffer
+		loadQueue:  make(chan string, maxWorkers*4), // Increased buffer
 		resultChan: make(chan *ImageResult, maxWorkers*4),
 		maxWorkers: maxWorkers,
 		maxSize:    defaultCacheSize,
@@ -61,14 +62,28 @@ func (m *ImageCacheManager) startWorkers() {
 
 func (m *ImageCacheManager) worker() {
 	for path := range m.loadQueue {
-		if _, exists := m.Get(path); !exists {
-			if resource, err := m.loadAndOptimizeImage(path); err == nil {
-				m.resultChan <- &ImageResult{Path: path, Resource: resource}
-				m.Set(path, resource)
-			} else {
-				m.resultChan <- &ImageResult{Path: path, Err: err}
-			}
+		// Skip if already cached
+		if _, exists := m.Get(path); exists {
+			m.wg.Done()
+			continue
 		}
+
+		// Load and optimize the image
+		resource, err := m.loadAndOptimizeImage(path)
+
+		// Always send result, even on error
+		result := &ImageResult{
+			Path:     path,
+			Resource: resource,
+			Err:      err,
+		}
+		m.resultChan <- result
+
+		// Only cache if successful
+		if err == nil {
+			m.Set(path, resource)
+		}
+		
 		m.wg.Done()
 	}
 }
@@ -90,6 +105,7 @@ func (m *ImageCacheManager) Set(path string, resource fyne.Resource) {
 	m.cacheMux.Lock()
 	defer m.cacheMux.Unlock()
 
+	// If path already exists, update it
 	if element, exists := m.cache[path]; exists {
 		m.lruList.MoveToFront(element)
 		cachedImg := element.Value.(*CachedImage)
@@ -98,34 +114,39 @@ func (m *ImageCacheManager) Set(path string, resource fyne.Resource) {
 		return
 	}
 
-	if m.lruList.Len() >= m.maxSize {
-		oldest := m.lruList.Back()
-		if oldest != nil {
-			m.lruList.Remove(oldest)
-			delete(m.cache, oldest.Value.(*CachedImage).resource.Name())
-		}
-	}
-
+	// Create new cache entry
 	cachedImg := &CachedImage{
 		resource: resource,
 		lastUsed: time.Now(),
 	}
+
+	// Add to front of LRU list and cache
 	element := m.lruList.PushFront(cachedImg)
 	m.cache[path] = element
+
+	// Remove oldest if we're over capacity
+	for m.lruList.Len() > m.maxSize {
+		oldest := m.lruList.Back()
+		if oldest != nil {
+			m.lruList.Remove(oldest)
+			// Find and remove from cache map
+			for path, element := range m.cache {
+				if element == oldest {
+					delete(m.cache, path)
+					break
+				}
+			}
+		}
+	}
 }
 
 func (m *ImageCacheManager) PreloadImages(paths []string) {
-	m.wg.Add(len(paths))
 	for _, path := range paths {
-		select {
-		case m.loadQueue <- path:
-			// Successfully queued
-		default:
-			// Queue is full, start a new worker
-			go func(p string) {
-				m.loadQueue <- p
-			}(path)
+		if _, exists := m.Get(path); exists {
+			continue // Skip if already cached
 		}
+		m.wg.Add(1)
+		m.loadQueue <- path
 	}
 }
 
