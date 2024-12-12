@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Holiday Bingo</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+        #drawer { width: 250px; background: #f4f4f4; height: 100vh; position: fixed; left: -250px; transition: left 0.3s; }
+        #drawer.open { left: 0; }
+        #top-shelf { background: #ddd; padding: 10px; text-align: center; }
+        #main-view { margin-left: 250px; padding: 20px; }
+        button { padding: 10px 20px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <div id="drawer">
+        <!-- Collapsible drawer content -->
+        <h2>Options</h2>
+    </div>
+    <div id="top-shelf">
+        <!-- Top shelf for previously drawn balls -->
+        <h1>Drawn Balls</h1>
+    </div>
+    <div id="main-view">
+        <!-- Main view with buttons -->
+        <button onclick="nextBall()">Next</button>
+        <button onclick="bingo()">BINGO!</button>
+    </div>
+    <script>
+        function nextBall() {
+            // Logic for drawing the next ball
+            alert('Next ball drawn!');
+        }
+        function bingo() {
+            // Logic for verifying bingo
+            alert('Bingo verification!');
+        }
+    </script>
+</body>
+</html>

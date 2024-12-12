@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #ffffff;
+        }
+        .header {
+            margin-bottom: 20px;
+        }
+        .header img {
+            width: 150px;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .header h1 {
+            font-size: 36px;
+            margin: 10px 0;
+            text-align: center;
+            color: #003366;
+        }
+        .bingo-card {
+            width: 100%;
+            max-width: 600px;
+            margin: auto;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        .bingo-card td {
+            width: 20%;
+            height: 120px;
+            border: 1px solid #000;
+            text-align: center;
+            vertical-align: middle;
+            overflow: hidden;
+        }
+        .bingo-card .free-space {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+        .bingo-card img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            display: block;
+            margin: auto;
+        }
+        /* Additional styles for PDF interactivity */
+        .cell-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            background-color: transparent;
+            transition: background-color 0.3s;
+        }
+        .cell-overlay.marked {
+            background-color: rgba(128, 128, 128, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="[[LOGO_PLACEHOLDER]]" alt="Company Logo">
+        <h1>Holiday Bingo</h1>
+    </div>
+    <table class="bingo-card">
+        <tr>
+            <td id="cell-0-0">[[IMG_0_0]]</td>
+            <td id="cell-0-1">[[IMG_0_1]]</td>
+            <td id="cell-0-2">[[IMG_0_2]]</td>
+            <td id="cell-0-3">[[IMG_0_3]]</td>
+            <td id="cell-0-4">[[IMG_0_4]]</td>
+        </tr>
+        <tr>
+            <td id="cell-1-0">[[IMG_1_0]]</td>
+            <td id="cell-1-1">[[IMG_1_1]]</td>
+            <td id="cell-1-2">[[IMG_1_2]]</td>
+            <td id="cell-1-3">[[IMG_1_3]]</td>
+            <td id="cell-1-4">[[IMG_1_4]]</td>
+        </tr>
+        <tr>
+            <td id="cell-2-0">[[IMG_2_0]]</td>
+            <td id="cell-2-1">[[IMG_2_1]]</td>
+            <td class="free-space" id="cell-2-2">FREE</td>
+            <td id="cell-2-3">[[IMG_2_3]]</td>
+            <td id="cell-2-4">[[IMG_2_4]]</td>
+        </tr>
+        <tr>
+            <td id="cell-3-0">[[IMG_3_0]]</td>
+            <td id="cell-3-1">[[IMG_3_1]]</td>
+            <td id="cell-3-2">[[IMG_3_2]]</td>
+            <td id="cell-3-3">[[IMG_3_3]]</td>
+            <td id="cell-3-4">[[IMG_3_4]]</td>
+        </tr>
+        <tr>
+            <td id="cell-4-0">[[IMG_4_0]]</td>
+            <td id="cell-4-1">[[IMG_4_1]]</td>
+            <td id="cell-4-2">[[IMG_4_2]]</td>
+            <td id="cell-4-3">[[IMG_4_3]]</td>
+            <td id="cell-4-4">[[IMG_4_4]]</td>
+        </tr>
+    </table>
+    <div style="margin-top: 20px;">
+        <p>Card ID: [[CARD_ID]]</p>
+        <p>Click any square to mark it. Click again to unmark.</p>
+        <button onclick="resetCard()">Reset Card</button>
+    </div>
+</body>
+</html>
