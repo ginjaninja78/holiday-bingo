@@ -1,4 +1,4 @@
-module holidaybingo
+module github.com/ginjaninja78/holidaybingo
 
 go 1.18
 

@@ -1,11 +1,8 @@
+// Package main implements the Holiday Bingo game with concurrent image processing
+// Version 1.0 - Implements basic game functionality with optimized image loading
 package main
 
 import (
-	"bytes"
-	"image"
-	"image/jpeg"
-	"image/png"
-	_ "image/png"
 	"log"
 	"math/rand"
 	"os"
@@ -20,15 +17,17 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/joho/godotenv"
-	"github.com/nfnt/resize"
+	"github.com/ginjaninja78/holidaybingo/pkg/cache"
 )
 
+// Global state variables for game management
+// TODO: Refactor into proper state management structure in v2
 var (
 	mainLabel       *widget.Label
 	historyShelf    *fyne.Container
-	images          []fyne.Resource
-	currentIndex    int
-	gameActive      bool
+	images          []fyne.Resource    // Stores all loaded game images
+	currentIndex    int               // Current image index in play
+	gameActive      bool              // Controls game state
 	newGameButton   *widget.Button
 	nextButton      *widget.Button
 	bingoButton     *widget.Button
@@ -38,6 +37,9 @@ var (
 	buttonContainer *fyne.Container
 	historyScroll   *container.Scroll
 	imageContainer  *fyne.Container
+	imageCache      *cache.ImageCacheManager  // Manages concurrent image loading and caching
+	totalImages     int                      // Total number of images to be loaded
+	loadedCount     int                      // Number of images currently loaded
 )
 
 func main() {
@@ -45,6 +47,9 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Fatalf("Error loading .env file: %v", err)
 	}
+
+	// Initialize cache manager
+	imageCache = cache.NewImageCacheManager(4) // Use 4 workers
 
 	myApp := app.NewWithID("com.example.holidaybingo")
 	myApp.Settings().SetTheme(theme.LightTheme())
@@ -200,127 +205,112 @@ func startNewGame() {
 		return
 	}
 
-	// Reset images slice
-	images = make([]fyne.Resource, 0)
+	// Create a loading progress bar
+	progress := widget.NewProgressBar()
+	imageContainer.Objects = []fyne.CanvasObject{
+		widget.NewLabel("Loading images..."),
+		progress,
+	}
+	imageContainer.Refresh()
 
-	// Load each image file
+	// Collect image paths
+	var imagePaths []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			// Only include image files
-			if ext := filepath.Ext(entry.Name()); ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
-				imgPath := filepath.Join(imgDir, entry.Name())
-				
-				// Optimize and load the image
-				imgData, err := optimizeImage(imgPath)
-				if err != nil {
-					log.Printf("Failed to optimize image %s: %v", imgPath, err)
-					continue
-				}
-
-				// Create a static resource from the optimized image data
-				imgRes := fyne.NewStaticResource(entry.Name(), imgData)
-				images = append(images, imgRes)
-			}
+			imagePaths = append(imagePaths, filepath.Join(imgDir, entry.Name()))
 		}
 	}
 
-	if len(images) == 0 {
-		log.Println("No images found in img directory")
+	if len(imagePaths) == 0 {
+		imageContainer.Objects = []fyne.CanvasObject{
+			widget.NewLabel("No images found in directory"),
+		}
 		return
 	}
 
-	// Fisher-Yates shuffle
-	rand.Seed(time.Now().UnixNano())
-	for i := len(images) - 1; i > 0; i-- {
-		j := rand.Intn(i + 1)
-		images[i], images[j] = images[j], images[i]
-	}
+	// Initialize image slice with capacity
+	images = make([]fyne.Resource, 0, len(imagePaths))
+	loadedImages := make(map[string]bool)
 	
-	gameActive = true
-	currentIndex = 0
-	displayNextImage()
-	log.Println("New game started with shuffled images")
-}
+	// Start background loading
+	go imageCache.PreloadImages(imagePaths)
 
-func optimizeImage(imgPath string) ([]byte, error) {
-	// Open the image file
-	file, err := os.Open(imgPath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
+	// Start a goroutine to collect results
+	resultChan := imageCache.GetResultChannel()
+	totalImages = len(imagePaths)
+	loadedCount = 0
 
-	// Decode the image
-	img, format, err := image.Decode(file)
-	if err != nil {
-		return nil, err
-	}
+	go func() {
+		for result := range resultChan {
+			if result.Err == nil && !loadedImages[result.Path] {
+				images = append(images, result.Resource)
+				loadedImages[result.Path] = true
+				loadedCount++
+				progress.SetValue(float64(loadedCount) / float64(totalImages))
 
-	// Calculate new size (max dimension of 800 pixels while maintaining aspect ratio)
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-	var newWidth, newHeight uint
-	if width > height {
-		newWidth = 800
-		newHeight = uint(float64(height) * (800.0 / float64(width)))
-	} else {
-		newHeight = 800
-		newWidth = uint(float64(width) * (800.0 / float64(height)))
-	}
+				// If this is the first image, start the game
+				if len(images) == 1 {
+					rand.Seed(time.Now().UnixNano())
+					currentIndex = 0
+					gameActive = true
+					displayNextImage()
+				}
+			}
+		}
+	}()
 
-	// Resize the image
-	resized := resize.Resize(newWidth, newHeight, img, resize.Lanczos3)
-
-	// Encode the resized image
-	var buf bytes.Buffer
-	switch format {
-	case "jpeg":
-		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 85})
-	case "png":
-		err = png.Encode(&buf, resized)
-	default:
-		err = jpeg.Encode(&buf, resized, &jpeg.Options{Quality: 85})
-	}
-	if err != nil {
-		return nil, err
+	// Start with any cached images immediately
+	for _, path := range imagePaths {
+		if resource, exists := imageCache.Get(path); exists && !loadedImages[path] {
+			images = append(images, resource)
+			loadedImages[path] = true
+			loadedCount++
+		}
 	}
 
-	return buf.Bytes(), nil
+	// Start game if we have any images
+	if len(images) > 0 {
+		rand.Seed(time.Now().UnixNano())
+		currentIndex = 0
+		gameActive = true
+		displayNextImage()
+	}
 }
 
 func displayNextImage() {
 	if !gameActive {
-		log.Println("Game not active")
 		return
 	}
 
-	// If we've reached the end, cycle back to the beginning
+	// If we've shown all current images but more are still loading, wait for next image
 	if currentIndex >= len(images) {
-		currentIndex = 0
+		if loadedCount < totalImages {
+			imageContainer.Objects = []fyne.CanvasObject{
+				widget.NewLabel("Loading more images..."),
+			}
+			return
+		}
+		// Only end if we've shown ALL images
+		imageContainer.Objects = []fyne.CanvasObject{
+			widget.NewLabel("Game Over - All images shown"),
+		}
+		gameActive = false
+		return
 	}
 
-	// Add current image to history before moving to next (only if not first display)
-	if currentIndex > 0 {
-		previousImage := canvas.NewImageFromResource(images[currentIndex-1])
-		previousImage.SetMinSize(fyne.NewSize(100, 100))
-		previousImage.FillMode = canvas.ImageFillContain
+	// Display current image
+	img := canvas.NewImageFromResource(images[currentIndex])
+	img.FillMode = canvas.ImageFillContain
+	img.SetMinSize(fyne.NewSize(400, 400))
+	imageContainer.Objects = []fyne.CanvasObject{img}
 
-		historyFrame := container.NewMax(previousImage)
-		historyFrame.Resize(fyne.NewSize(100, 100))
-
-		paddedFrame := container.NewPadded(historyFrame)
-		historyShelf.Add(paddedFrame)
-		historyScroll.Refresh()
-	}
-
-	// Update the main image
-	image := canvas.NewImageFromResource(images[currentIndex])
-	image.FillMode = canvas.ImageFillContain
-	image.SetMinSize(fyne.NewSize(500, 500))
-	imageContainer.Objects = []fyne.CanvasObject{image}
+	// Add to history
+	historyImg := canvas.NewImageFromResource(images[currentIndex])
+	historyImg.SetMinSize(fyne.NewSize(100, 100))
+	historyImg.FillMode = canvas.ImageFillContain
+	historyShelf.Add(historyImg)
+	historyScroll.Refresh()
 
 	currentIndex++
 	mainView.Refresh()
-	log.Printf("Displayed image %d", currentIndex)
 }
